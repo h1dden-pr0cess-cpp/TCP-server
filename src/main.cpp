@@ -12,26 +12,30 @@
 
 class server_tcp{
 public:
+    
+
 struct server_data{
+        static constexpr int PORT = 8080;
+        static constexpr int MAX_EVENTS = 1024;
+        static constexpr int BUFFER_SIZE = 4096;
+
         int server_fd;
         sockaddr_in addr;
         int epoll_fd;
-        epoll_event event
-    };    
+        epoll_event event;
 
-    server_data serv;
+        std::vector<epoll_event> events{MAX_EVENTS};
+    };   
+    server_data sch;
 
     server_tcp()
     {
         //trying create server
-        
         if(try_create_server() == 1) throw 1;
     }
 
 private:
-    const int PORT = 8080;
-    const int MAX_EVENTS = 1024;
-    const int BUFFER_SIZE = 4096;
+
     
     // Установка неблокирующего режима для файлового дескриптора
     void set_nonblock(int fd) {
@@ -41,8 +45,8 @@ private:
 
     bool create_tcp_socet()
     {
-        serv.server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (serv.server_fd == -1) {
+        sch.server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        if (sch.server_fd == -1) {
             std::cerr << "socket() failed: " << strerror(errno) << std::endl;
             return true;
         }
@@ -51,16 +55,16 @@ private:
 
     void settings_addr()
     {
-        serv.addr.sin_family = AF_INET;
-        serv.addr.sin_addr.s_addr = INADDR_ANY;
-        serv.addr.sin_port = htons(PORT);
+        sch.addr.sin_family = AF_INET;
+        sch.addr.sin_addr.s_addr = INADDR_ANY;
+        sch.addr.sin_port = htons(sch.PORT);
     }
 
     bool connect_tcp_scoket()
     {
-        if (bind(serv.server_fd, (sockaddr*)&serv.addr, sizeof(serv.addr)) == -1) {
+        if (bind(sch.server_fd, (sockaddr*)&sch.addr, sizeof(sch.addr)) == -1) {
             std::cerr << "bind() failed: " << strerror(errno) << std::endl;
-            close(serv.server_fd);
+            close(sch.server_fd);
             return true;
         }
         return false;
@@ -68,9 +72,9 @@ private:
 
     bool switch_to_listening_mode()
     {
-        if (listen(serv.server_fd, SOMAXCONN) == -1) {
+        if (listen(sch.server_fd, SOMAXCONN) == -1) {
             std::cerr << "listen() failed: " << strerror(errno) << std::endl;
-            close(serv.server_fd);
+            close(sch.server_fd);
             return true;
         }
         return false;
@@ -78,10 +82,10 @@ private:
     
     bool create_epoll()
     {
-        serv.epoll_fd = epoll_create1(0);
-        if (serv.epoll_fd == -1) {
+        sch.epoll_fd = epoll_create1(0);
+        if (sch.epoll_fd == -1) {
             std::cerr << "epoll_create() failed: " << strerror(errno) << std::endl;
-            close(serv.server_fd);
+            close(sch.server_fd);
             return true;
         }
         return false;
@@ -89,12 +93,12 @@ private:
 
     bool add_socket_to_epoll()
     {
-        serv.event.data.fd = serv.server_fd;
-        serv.event.events = EPOLLIN | EPOLLET; // Edge-Triggered режим
-        if (epoll_ctl(serv.epoll_fd, EPOLL_CTL_ADD, serv.server_fd, &serv.event) == -1) {
+        sch.event.data.fd = sch.server_fd;
+        sch.event.events = EPOLLIN | EPOLLET; // Edge-Triggered режим
+        if (epoll_ctl(sch.epoll_fd, EPOLL_CTL_ADD, sch.server_fd, &sch.event) == -1) {
             std::cerr << "epoll_ctl() failed: " << strerror(errno) << std::endl;
-            close(serv.server_fd);
-            close(serv.epoll_fd);
+            close(sch.server_fd);
+            close(sch.epoll_fd);
             return true;
         }
         return false;
@@ -119,10 +123,8 @@ private:
 
         // Добавление серверного сокета в epoll
         if(add_socket_to_epoll()) return 1;
-
-
-        std::vector<epoll_event> events(MAX_EVENTS);
-        std::cout << "Server started on port " << PORT << std::endl;
+        
+        std::cout << "Server started on port " << sch.PORT << std::endl;
 
         server_listening();
 
@@ -132,7 +134,7 @@ private:
     void server_listening()
     {
         while (true) {
-            int num_events = epoll_wait(epoll_fd, events.data(), events.size(), -1);
+            int num_events = epoll_wait(sch.epoll_fd, sch.events.data(), sch.events.size(), -1);
             if (num_events == -1) {
                 if (errno == EINTR) continue; // Перезапуск при прерывании сигналом
                 std::cerr << "epoll_wait() failed: " << strerror(errno) << std::endl;
@@ -140,12 +142,12 @@ private:
             }
 
             for (int i = 0; i < num_events; ++i) {
-                if (events[i].data.fd == server_fd) {
+                if (sch.events[i].data.fd == sch.server_fd) {
                     // Обработка новых подключений
                     while (true) {
                         sockaddr_in client_addr{};
                         socklen_t addr_len = sizeof(client_addr);
-                        int client_fd = accept4(server_fd, (sockaddr*)&client_addr, 
+                        int client_fd = accept4(sch.server_fd, (sockaddr*)&client_addr, 
                                             &addr_len, SOCK_NONBLOCK);
                         if (client_fd == -1) {
                             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
@@ -154,43 +156,43 @@ private:
                         }
 
                         // Добавление клиента в epoll
-                        event.data.fd = client_fd;
-                        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-                        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event) == -1) {
+                        sch.event.data.fd = client_fd;
+                        sch.event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+                        if (epoll_ctl(sch.epoll_fd, EPOLL_CTL_ADD, client_fd, &sch.event) == -1) {
                             std::cerr << "epoll_ctl(client) failed: " << strerror(errno) << std::endl;
                             close(client_fd);
                         }
                     }
                 } else {
                     // Обработка данных от клиентов
-                    if (events[i].events & EPOLLRDHUP) {
+                    if (sch.events[i].events & EPOLLRDHUP) {
                         // Клиент отключился
-                        close(events[i].data.fd);
+                        close(sch.events[i].data.fd);
                         continue;
                     }
 
-                    if (events[i].events & EPOLLIN) {
-                        char buffer[BUFFER_SIZE];
+                    if (sch.events[i].events & EPOLLIN) {
+                        char buffer[sch.BUFFER_SIZE];
                         ssize_t bytes_read;
                         
-                        while ((bytes_read = read(events[i].data.fd, buffer, sizeof(buffer)))) {
+                        while ((bytes_read = read(sch.events[i].data.fd, buffer, sizeof(buffer)))) {
                             if (bytes_read == -1) {
                                 if (errno != EAGAIN) {
                                     std::cerr << "read() error: " << strerror(errno) << std::endl;
-                                    close(events[i].data.fd);
+                                    close(sch.events[i].data.fd);
                                 }
                                 break;
                             }
 
                             // Эхо-ответ
-                            write(events[i].data.fd, buffer, bytes_read);
+                            write(sch.events[i].data.fd, buffer, bytes_read);
                         }
                     }
                 }
             }
         }
-        close(server_fd);
-        close(epoll_fd);
+        close(sch.server_fd);
+        close(sch.epoll_fd);
     }
 
 };
