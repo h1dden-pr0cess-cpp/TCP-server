@@ -28,7 +28,6 @@ CMakeCache.txt
 #
 *.cmake
 *.make
-Makefile
 compile_commands.json
 #
 *.sock
